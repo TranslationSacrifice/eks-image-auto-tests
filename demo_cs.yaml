@@ -1,0 +1,77 @@
+# democs.yaml
+---
+apiVersion: apps.ebcloud.com/v1alpha1
+kind: ContainerServer
+metadata:
+  name: democs
+  annotations:
+    eks.ebcloud.com/enable-spot: "false" # 启用竞价实例
+spec:
+  enableDocker: false                    # 是否启用内置docker
+  enableSystemDisk: true                 # 需要设置为true
+  image: registry-cn-huabei1-internal.ebcloud.com/ebsys/pytorch:2.5.1-cuda12.2-python3.10-ubuntu22.04-v09 # 开发机使用的基础镜像
+  jupyterAccess:
+    enable: true                         # 启用jupyter 访问通路
+    port: 8888                           # jupyter端口
+    token: "9rVtdXoM8oBW-Dni5w9leJBTPBrE7KQ28lRr7xsX2eTyu9qO"        # jupyter访问的token
+  enablePrePaid: false                   # 是否使用节点池中的节点
+  initRootPassword: "k@z2a8v.yp(R6037"   # root 用户的初始密码
+  command:
+    - bash
+    - -c
+    - |-
+        # 1. Initialize 阶段: 安装必要软件包，初始化环境配置
+        if [ -z "${EBCS_SYS_INITIALIZED}"] || [ "${EBCS_SYS_INITIALIZED}" = "False" ]; then
+          # 1.1 Initialize Package 子阶段: 安装必要软件包
+          echo "do nothing"
+
+          # 1.2 Initialize Config 子阶段: 初始化环境配置
+          # 初始化 root 密码
+          echo "root:$EBCS_SYS_ROOT_PASSWORD" | chpasswd
+
+          # 初始化 k8s 环境变量
+          if [ -f /proc/1/environ ]; then
+            echo 'while IFS= read -r line; do export "$line"; done < <(tr "\\0" "\\n" < /proc/1/environ)' >> /etc/profile
+            echo "Init k8s env complete."
+          fi
+        fi
+
+        # 2. Launch 阶段: 启动 jupyter-lab 后台运行，启动 sshd 作为主进程运行
+        # 后台启动 jupyter-lab
+        if command -v jupyter-lab >/dev/null 2>&1 && [ -n "$EBCS_JUPYTER_PORT" ] && [ -n "$EBCS_JUPYTER_TOKEN" ]; then
+          cd /root && jupyter-lab --allow-root --ip=0.0.0.0 --port=$EBCS_JUPYTER_PORT  --NotebookApp.token=$EBCS_JUPYTER_TOKEN --no-browser --NotebookApp.allow_origin='*' --NotebookApp.allow_remote_access=True > /dev/null 2>&1 &
+        fi
+
+        # 启动 sshd 服务，作为主进程
+        if service ssh start -D; then
+          echo "service ssh start failed."
+        else
+          /usr/sbin/sshd -D
+          echo "sshd start as daemon failed."
+        fi
+  plannedPoweroff:
+    execTime: "2025-09-30 19:24:00" # 定时关机
+  network:
+    public: false                   # 公网IP
+    tcp:
+      ports:                        # 对外暴露的端口
+      - 80
+      - 443
+  power: "ON"                       # ON开机 / OFF关机
+  sshAccess:
+    enable: true                    # 开启 SSH 直连服务
+    targetPort: 22                  # SSH 端口
+  volumeMounts:
+  - name: t256g                     # 挂载卷名称，可与存储卷名称保持一致
+    mountPath: /data                # 挂载路径
+    persistentVolumeClaim:
+      claimName: t256g              # 存储卷名称
+  resources:
+    # cpu:
+    #   count: "10"                   # vCPU 数（核）
+    # memory:
+    #   count: 100Gi                  # 内存 容量（G）
+    gpu:
+      type: "A800_NVLINK_80GB"      # GPU类型（A800_NVLINK_80GB, H800_NVLINK_80GB，RTX_4090, RTX_4090D）
+      driver: "535.161.08"
+      count: "1"
